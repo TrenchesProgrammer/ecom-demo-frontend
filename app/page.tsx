@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 interface Product {
   id: string | number;
@@ -48,38 +48,45 @@ export default function Home() {
     fetchProducts();
   }, []);
 
-  // Buy product via POST /api/buy with idempotency-key header
+
+  // inside the component
+  const idempotencyKeyRef = useRef<string | null>(null);
+
   const handleBuy = async () => {
     setBuyLoading(true);
     setMessage(null);
     setError(null);
 
-    const idempotencyKey = crypto.randomUUID();
+    // Reuse the existing key if the last attempt never got an answer
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current = crypto.randomUUID();
+    }
 
     try {
       const res = await fetch(`${BASE_URL}/api/buy`, {
         method: "POST",
-        headers: {
-          "idempotency-key": idempotencyKey,
-        },
+        headers: { "idempotency-key": idempotencyKeyRef.current },
       });
 
       const data = await res.json();
 
+      // We got a definitive answer from the server, so this attempt is over
+      idempotencyKeyRef.current = null;
+
       if (res.ok && data.success) {
         setMessage(data.message || "Purchase successful!");
-        fetchProducts(); // Refresh stock
       } else {
         setError(data.message || "Purchase failed");
-        fetchProducts();
       }
+      fetchProducts();
     } catch (err: any) {
-      setError(err.message || "Error processing purchase");
+      // Network error: we don't know if the server processed it.
+      // Keep the key so the next click is a safe retry.
+      setError("Network error. Click Buy again to retry safely.");
     } finally {
       setBuyLoading(false);
     }
   };
-
   return (
     <main className="max-w-xl mx-auto p-6 font-sans">
       <h1 className="text-2xl font-bold mb-4">Ecom Demo</h1>
@@ -123,10 +130,10 @@ export default function Home() {
                   onClick={handleBuy}
                   disabled={buyLoading || product.stock <= 0}
                   className={`px-4 py-2 rounded font-medium text-white transition ${product.stock <= 0
-                      ? "bg-gray-400 cursor-not-allowed"
-                      : buyLoading
-                        ? "bg-blue-400 cursor-wait"
-                        : "bg-blue-600 hover:bg-blue-700"
+                    ? "bg-gray-400 cursor-not-allowed"
+                    : buyLoading
+                      ? "bg-blue-400 cursor-wait"
+                      : "bg-blue-600 hover:bg-blue-700"
                     }`}
                 >
                   {buyLoading
