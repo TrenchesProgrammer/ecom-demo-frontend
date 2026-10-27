@@ -1,4 +1,7 @@
 "use client";
+// import dotenv from "dotenv";
+// dotenv.config();
+
 
 import { useEffect, useState, useRef } from "react";
 
@@ -8,7 +11,14 @@ interface Product {
   stock: number;
 }
 
-const BASE_URL = process.env.BASE_URL;
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL;
+
+function getApiUrl(path: string) {
+  if (!BASE_URL) {
+    throw new Error("NEXT_PUBLIC_BASE_URL is not configured");
+  }
+  return `${BASE_URL.replace(/\/+$/, "")}${path}`;
+}
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -22,7 +32,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${BASE_URL}/api/products`);
+      const res = await fetch(getApiUrl("/api/products"));
 
       if (!res.ok) {
         throw new Error(`Failed to fetch products (Status: ${res.status})`);
@@ -63,7 +73,7 @@ export default function Home() {
     }
 
     try {
-      const res = await fetch(`${BASE_URL}/api/buy`, {
+      const res = await fetch(getApiUrl("/api/buy"), {
         method: "POST",
         headers: { "idempotency-key": idempotencyKeyRef.current },
       });
