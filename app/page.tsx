@@ -8,7 +8,7 @@ interface Product {
   stock: number;
 }
 
-const BASE_URL = "http://localhost:8000";
+const BASE_URL = process.env.BASE_URL;
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
