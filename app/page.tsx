@@ -1,7 +1,4 @@
 "use client";
-// import dotenv from "dotenv";
-// dotenv.config();
-
 
 import { useEffect, useState, useRef } from "react";
 
@@ -58,38 +55,49 @@ export default function Home() {
     fetchProducts();
   }, []);
 
-
   // inside the component
   const idempotencyKeyRef = useRef<string | null>(null);
 
-  const handleBuy = async () => {
+  const handleBuy = async (productId: string | number) => {
     setBuyLoading(true);
     setMessage(null);
     setError(null);
 
-    // Reuse the existing key if the last attempt never got an answer
-    if (!idempotencyKeyRef.current) {
-      idempotencyKeyRef.current = crypto.randomUUID();
-    }
-
     try {
+      // Moved INSIDE the try-catch block so errors don't permanently freeze the button
+      if (!idempotencyKeyRef.current) {
+        // Fallback for HTTP environments where crypto.randomUUID might be undefined
+        idempotencyKeyRef.current = typeof crypto !== 'undefined' && crypto.randomUUID 
+          ? crypto.randomUUID() 
+          : `fallback-id-${Date.now()}`;
+      }
+
       const res = await fetch(getApiUrl("/api/buy"), {
         method: "POST",
-        headers: { "idempotency-key": idempotencyKeyRef.current },
+        headers: { 
+          "Content-Type": "application/json",
+          "idempotency-key": idempotencyKeyRef.current 
+        },
+        body: JSON.stringify({ productId }), 
       });
 
-      const data = await res.json();
+      // Safely parse JSON in case the server crashes and returns an HTML error page
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
 
       // We got a definitive answer from the server, so this attempt is over
       idempotencyKeyRef.current = null;
 
-      if (res.ok && data.success) {
+      if (res.ok && data.success !== false) {
         setMessage(data.message || "Purchase successful!");
       } else {
         setError(data.message || "Purchase failed");
       }
+      
+      // Refresh products list
       fetchProducts();
     } catch (err: any) {
+      console.error(err);
       // Network error: we don't know if the server processed it.
       // Keep the key so the next click is a safe retry.
       setError("Network error. Click Buy again to retry safely.");
@@ -97,6 +105,7 @@ export default function Home() {
       setBuyLoading(false);
     }
   };
+
   return (
     <main className="max-w-xl mx-auto p-6 font-sans">
       <h1 className="text-2xl font-bold mb-4">Ecom Demo</h1>
@@ -137,14 +146,15 @@ export default function Home() {
 
                 <button
                   id={`btn-buy-${product.id}`}
-                  onClick={handleBuy}
+                  onClick={() => handleBuy(product.id)}
                   disabled={buyLoading || product.stock <= 0}
-                  className={`px-4 py-2 rounded font-medium text-white transition ${product.stock <= 0
-                    ? "bg-gray-400 cursor-not-allowed"
-                    : buyLoading
-                      ? "bg-blue-400 cursor-wait"
-                      : "bg-blue-600 hover:bg-blue-700"
-                    }`}
+                  className={`px-4 py-2 rounded font-medium text-white transition ${
+                    product.stock <= 0
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : buyLoading
+                        ? "bg-blue-400 cursor-wait"
+                        : "bg-blue-600 hover:bg-blue-700"
+                  }`}
                 >
                   {buyLoading
                     ? "Buying..."
