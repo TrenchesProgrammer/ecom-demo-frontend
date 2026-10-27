@@ -11,7 +11,7 @@ interface Product {
   stock: number;
 }
 
-const BASE_URL = process.env.NEXT_BASE_URL;
+const BASE_URL = "https://ecom-demo-backend.vercel.app";
 
 function getApiUrl(path: string) {
   if (!BASE_URL) {
