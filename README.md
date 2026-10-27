@@ -22,7 +22,7 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 ## Environment variables
 
-The storefront calls the backend from a client component. Set `NEXT_PUBLIC_BASE_URL` to the backend's absolute URL in `.env` for local development and in your deployment environment before building.
+The storefront calls the backend from a client component. Set `NEXT_BASE_URL` to the backend's absolute URL in `.env` for local development and in your deployment environment before building.
 
 ## Learn More
 

@@ -11,11 +11,11 @@ interface Product {
   stock: number;
 }
 
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL;
+const BASE_URL = process.env.NEXT_BASE_URL;
 
 function getApiUrl(path: string) {
   if (!BASE_URL) {
-    throw new Error("NEXT_PUBLIC_BASE_URL is not configured");
+    throw new Error("NEXT_BASE_URL is not configured");
   }
   return `${BASE_URL.replace(/\/+$/, "")}${path}`;
 }
