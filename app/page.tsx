@@ -12,6 +12,7 @@ interface Transaction {
   id: string;
   user: string;
   productId: string;
+  quantity?: number;
   productName?: string;
   createdAt: Date | string;
 }
@@ -25,6 +26,64 @@ function getApiUrl(path: string) {
   return `${BASE_URL.replace(/\/+$/, "")}${path}`;
 }
 
+interface ProductCardProps {
+  product: Product;
+  buyLoading: boolean;
+  onBuy: (productId: string, quantity: number) => void;
+}
+
+function ProductCard({ product, buyLoading, onBuy }: ProductCardProps) {
+  const [quantity, setQuantity] = useState<number>(1);
+
+  return (
+    <div className="flex items-center justify-between p-3 border rounded bg-gray-50">
+      <div>
+        <h3 className="font-medium text-gray-900">{product.name}</h3>
+        <p className="text-sm text-gray-600">
+          Stock: <span className="font-semibold">{product.stock}</span>
+        </p>
+      </div>
+
+      <div className="flex items-center">
+        <button
+          onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+          className="px-3 py-1 border rounded-l bg-gray-200 hover:bg-gray-300"
+        >
+          -
+        </button>
+        <span className="px-3 py-1 border-t border-b bg-gray-100 min-w-[2.5rem] text-center">
+          {quantity}
+        </span>
+        <button
+          onClick={() => setQuantity((q) => Math.min(product.stock, q + 1))}
+          className="px-3 py-1 border rounded-r bg-gray-200 hover:bg-gray-300"
+        >
+          +
+        </button>
+      </div>
+
+      <button
+        id={`btn-buy-${product.productId}`}
+        onClick={() => onBuy(product.productId, quantity)}
+        disabled={buyLoading || product.stock <= 0}
+        className={`px-4 py-2 rounded font-medium text-white transition ${
+          product.stock <= 0
+            ? "bg-gray-400 cursor-not-allowed"
+            : buyLoading
+            ? "bg-blue-400 cursor-wait"
+            : "bg-blue-600 hover:bg-blue-700"
+        }`}
+      >
+        {buyLoading
+          ? "Buying..."
+          : product.stock <= 0
+          ? "Out of Stock"
+          : "Buy"}
+      </button>
+    </div>
+  );
+}
+
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -35,7 +94,6 @@ export default function Home() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize guestId safely on client mount
   useEffect(() => {
     let id = localStorage.getItem("storedId");
     if (!id) {
@@ -71,7 +129,6 @@ export default function Home() {
       const data = await res.json();
       const rawList = Array.isArray(data) ? data : data ? [data] : [];
       
-      // Normalize products according to Prisma schema (productId)
       const normalizedProducts: Product[] = rawList.map((item, index) => ({
         ...item,
         productId: item?.productId ?? item?.id ?? `prod-${index}`,
@@ -85,7 +142,7 @@ export default function Home() {
     }
   };
 
- const fetchTransactions = async (activeGuestId?: string) => {
+  const fetchTransactions = async (activeGuestId?: string) => {
     const idToUse = activeGuestId || guestId;
     if (!idToUse) return;
 
@@ -103,15 +160,14 @@ export default function Home() {
 
       const json = await res.json();
       
-      // FIX 1: Extract the array from the backend's { data: { transactions: [] } } envelope
       const targetData = json?.data?.transactions ? json.data.transactions : json;
       const rawList = Array.isArray(targetData) ? targetData : targetData ? [targetData] : [];
 
-      // Enrich transactions with product names
       const enrichedTransactions: Transaction[] = await Promise.all(
         rawList.map(async (item, index) => {
           const productId = item.productId || item.product_id || "";
           const txId = item.id || `tx-${index}`;
+          const qty = item.quantity ?? item.qty ?? 1;
           let productName = "Unknown Product";
 
           if (productId) {
@@ -132,6 +188,7 @@ export default function Home() {
             id: txId,
             productId,
             productName,
+            quantity: qty,
           };
         })
       );
@@ -156,7 +213,7 @@ export default function Home() {
 
   const idempotencyKeyRef = useRef<string | null>(null);
 
-  const handleBuy = async (productId: string) => {
+  const handleBuy = async (productId: string, quantity: number) => {
     setBuyLoading(true);
     setMessage(null);
     setError(null);
@@ -175,7 +232,7 @@ export default function Home() {
           "idempotency-key": idempotencyKeyRef.current,
           "guest-id": guestId 
         },
-        body: JSON.stringify({ productId }), 
+        body: JSON.stringify({ productId, quantity }), 
       });
 
       const text = await res.text();
@@ -226,36 +283,12 @@ export default function Home() {
         ) : (
           <div className="space-y-4">
             {products.map((product) => (
-              <div
+              <ProductCard
                 key={product.productId}
-                className="flex items-center justify-between p-3 border rounded bg-gray-50"
-              >
-                <div>
-                  <h3 className="font-medium text-gray-900">{product.name}</h3>
-                  <p className="text-sm text-gray-600">
-                    Stock: <span className="font-semibold">{product.stock}</span>
-                  </p>
-                </div>
-
-                <button
-                  id={`btn-buy-${product.productId}`}
-                  onClick={() => handleBuy(product.productId)}
-                  disabled={buyLoading || product.stock <= 0}
-                  className={`px-4 py-2 rounded font-medium text-white transition ${
-                    product.stock <= 0
-                      ? "bg-gray-400 cursor-not-allowed"
-                      : buyLoading
-                        ? "bg-blue-400 cursor-wait"
-                        : "bg-blue-600 hover:bg-blue-700"
-                  }`}
-                >
-                  {buyLoading
-                    ? "Buying..."
-                    : product.stock <= 0
-                      ? "Out of Stock"
-                      : "Buy"}
-                </button>
-              </div>
+                product={product}
+                buyLoading={buyLoading}
+                onBuy={handleBuy}
+              />
             ))}
           </div>
         )}
@@ -284,9 +317,14 @@ export default function Home() {
             {transactions.map((tx) => (
               <div key={tx.id} className="p-3 border rounded bg-gray-50 text-sm flex justify-between items-center">
                 <div>
-                  <p className="font-semibold text-gray-900">{tx.productName}</p>
+                  <p className="font-semibold text-gray-900">
+                    {tx.productName}{" "}
+                    <span className="text-gray-500 font-normal">
+                      (Qty: {tx.quantity ?? 1})
+                    </span>
+                  </p>
                   <p className="text-xs text-gray-500">
-                    Product ID: {tx.productId} • Tx ID: {tx.id}
+                    Product ID: {tx.productId} | Tx ID: {tx.id}
                   </p>
                 </div>
                 <div className="text-right text-xs text-gray-500">
