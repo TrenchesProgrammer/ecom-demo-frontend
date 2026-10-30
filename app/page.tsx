@@ -3,9 +3,17 @@
 import { useEffect, useState, useRef } from "react";
 
 interface Product {
-  id: string | number;
+  productId: string;
   name: string;
   stock: number;
+}
+
+interface Transaction {
+  id: string;
+  user: string;
+  productId: string;
+  productName?: string;
+  createdAt: Date | string;
 }
 
 const BASE_URL = "https://ecom-demo-backend.vercel.app";
@@ -19,12 +27,37 @@ function getApiUrl(path: string) {
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [buyLoading, setBuyLoading] = useState(false);
+  const [txLoading, setTxLoading] = useState(false);
+  const [guestId, setGuestId] = useState<string>("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch products from GET /api/products
+  // Initialize guestId safely on client mount
+  useEffect(() => {
+    let id = localStorage.getItem("storedId");
+    if (!id) {
+      id = typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `guest-${Date.now()}`;
+      localStorage.setItem("storedId", id);
+    }
+    setGuestId(id);
+  }, []);
+
+  const fetchProductById = async (id: string): Promise<Product | null> => {
+    try {
+      const res = await fetch(getApiUrl(`/api/products/${id}`));
+      if (!res.ok) return null;
+      const data = await res.json();
+      return Array.isArray(data) ? data[0] : data;
+    } catch {
+      return null;
+    }
+  };
+
   const fetchProducts = async () => {
     setLoading(true);
     setError(null);
@@ -36,14 +69,15 @@ export default function Home() {
       }
 
       const data = await res.json();
-      // Handle single product object or list of products
-      if (Array.isArray(data)) {
-        setProducts(data);
-      } else if (data && typeof data === "object") {
-        setProducts([data]);
-      } else {
-        setProducts([]);
-      }
+      const rawList = Array.isArray(data) ? data : data ? [data] : [];
+      
+      // Normalize products according to Prisma schema (productId)
+      const normalizedProducts: Product[] = rawList.map((item, index) => ({
+        ...item,
+        productId: item?.productId ?? item?.id ?? `prod-${index}`,
+      }));
+      
+      setProducts(normalizedProducts);
     } catch (err: any) {
       setError(err.message || "Failed to load products");
     } finally {
@@ -51,23 +85,85 @@ export default function Home() {
     }
   };
 
+ const fetchTransactions = async (activeGuestId?: string) => {
+    const idToUse = activeGuestId || guestId;
+    if (!idToUse) return;
+
+    setTxLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(getApiUrl("/api/transactions"), {
+        method: "GET",
+        headers: { "guest-id": idToUse },
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to fetch transactions (Status: ${res.status})`);
+      }
+
+      const json = await res.json();
+      
+      // FIX 1: Extract the array from the backend's { data: { transactions: [] } } envelope
+      const targetData = json?.data?.transactions ? json.data.transactions : json;
+      const rawList = Array.isArray(targetData) ? targetData : targetData ? [targetData] : [];
+
+      // Enrich transactions with product names
+      const enrichedTransactions: Transaction[] = await Promise.all(
+        rawList.map(async (item, index) => {
+          const productId = item.productId || item.product_id || "";
+          const txId = item.id || `tx-${index}`;
+          let productName = "Unknown Product";
+
+          if (productId) {
+            const localProduct = products.find((p) => String(p.productId) === String(productId));
+            
+            if (localProduct) {
+              productName = localProduct.name;
+            } else {
+              const fetchedProduct = await fetchProductById(productId);
+              if (fetchedProduct?.name) {
+                productName = fetchedProduct.name;
+              }
+            }
+          }
+
+          return {
+            ...item,
+            id: txId,
+            productId,
+            productName,
+          };
+        })
+      );
+
+      setTransactions(enrichedTransactions);
+    } catch (err: any) {
+      setError(err.message || "Failed to load transactions");
+    } finally {
+      setTxLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchProducts();
   }, []);
 
-  // inside the component
+  useEffect(() => {
+    if (guestId) {
+      fetchTransactions(guestId);
+    }
+  }, [guestId]);
+
   const idempotencyKeyRef = useRef<string | null>(null);
 
-  const handleBuy = async (productId: string | number) => {
+  const handleBuy = async (productId: string) => {
     setBuyLoading(true);
     setMessage(null);
     setError(null);
 
     try {
-      // Moved INSIDE the try-catch block so errors don't permanently freeze the button
       if (!idempotencyKeyRef.current) {
-        // Fallback for HTTP environments where crypto.randomUUID might be undefined
-        idempotencyKeyRef.current = typeof crypto !== 'undefined' && crypto.randomUUID 
+        idempotencyKeyRef.current = typeof crypto !== "undefined" && crypto.randomUUID 
           ? crypto.randomUUID() 
           : `fallback-id-${Date.now()}`;
       }
@@ -76,16 +172,15 @@ export default function Home() {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
-          "idempotency-key": idempotencyKeyRef.current 
+          "idempotency-key": idempotencyKeyRef.current,
+          "guest-id": guestId 
         },
         body: JSON.stringify({ productId }), 
       });
 
-      // Safely parse JSON in case the server crashes and returns an HTML error page
       const text = await res.text();
       const data = text ? JSON.parse(text) : {};
 
-      // We got a definitive answer from the server, so this attempt is over
       idempotencyKeyRef.current = null;
 
       if (res.ok && data.success !== false) {
@@ -94,12 +189,10 @@ export default function Home() {
         setError(data.message || "Purchase failed");
       }
       
-      // Refresh products list
       fetchProducts();
+      fetchTransactions(guestId);
     } catch (err: any) {
       console.error(err);
-      // Network error: we don't know if the server processed it.
-      // Keep the key so the next click is a safe retry.
       setError("Network error. Click Buy again to retry safely.");
     } finally {
       setBuyLoading(false);
@@ -107,17 +200,17 @@ export default function Home() {
   };
 
   return (
-    <main className="max-w-xl mx-auto p-6 font-sans">
-      <h1 className="text-2xl font-bold mb-4">Ecom Demo</h1>
+    <main className="max-w-xl mx-auto p-6 font-sans space-y-6">
+      <h1 className="text-2xl font-bold">Ecom Demo</h1>
 
       {/* Messages */}
       {message && (
-        <div className="mb-4 p-3 bg-green-100 border border-green-300 text-green-800 rounded">
+        <div className="p-3 bg-green-100 border border-green-300 text-green-800 rounded">
           {message}
         </div>
       )}
       {error && (
-        <div className="mb-4 p-3 bg-red-100 border border-red-300 text-red-800 rounded">
+        <div className="p-3 bg-red-100 border border-red-300 text-red-800 rounded">
           {error}
         </div>
       )}
@@ -134,7 +227,7 @@ export default function Home() {
           <div className="space-y-4">
             {products.map((product) => (
               <div
-                key={product.id}
+                key={product.productId}
                 className="flex items-center justify-between p-3 border rounded bg-gray-50"
               >
                 <div>
@@ -145,8 +238,8 @@ export default function Home() {
                 </div>
 
                 <button
-                  id={`btn-buy-${product.id}`}
-                  onClick={() => handleBuy(product.id)}
+                  id={`btn-buy-${product.productId}`}
+                  onClick={() => handleBuy(product.productId)}
                   disabled={buyLoading || product.stock <= 0}
                   className={`px-4 py-2 rounded font-medium text-white transition ${
                     product.stock <= 0
@@ -176,6 +269,33 @@ export default function Home() {
             Refresh Products
           </button>
         </div>
+      </div>
+
+      {/* Transactions list */}
+      <div className="border rounded-lg p-5 bg-white shadow-sm">
+        <h2 className="text-lg font-semibold mb-3">Your Transactions</h2>
+
+        {txLoading ? (
+          <p className="text-gray-500">Loading transactions...</p>
+        ) : transactions.length === 0 ? (
+          <p className="text-gray-500">No transactions recorded yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {transactions.map((tx) => (
+              <div key={tx.id} className="p-3 border rounded bg-gray-50 text-sm flex justify-between items-center">
+                <div>
+                  <p className="font-semibold text-gray-900">{tx.productName}</p>
+                  <p className="text-xs text-gray-500">
+                    Product ID: {tx.productId} • Tx ID: {tx.id}
+                  </p>
+                </div>
+                <div className="text-right text-xs text-gray-500">
+                  {tx.createdAt ? new Date(tx.createdAt).toLocaleDateString() : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </main>
   );
